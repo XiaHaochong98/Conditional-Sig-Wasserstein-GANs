@@ -65,10 +65,19 @@ class SigCWGAN(BaseAlgo):
         self.G_scheduler = optim.lr_scheduler.StepLR(self.G_optimizer, step_size=100, gamma=0.9)
 
     def sample_batch(self, ):
-        random_indices = sample_indices(self.sigs_pred.shape[0], self.batch_size)  # sample indices
+        random_indices = sample_indices(self.sigs_pred.shape[0], self.batch_size) # sample indices
         # sample the least squares signature and the log-rtn condition
-        sigs_pred = self.sigs_pred[random_indices].clone().to(self.device)
-        x_past = self.x_past[random_indices].clone().to(self.device)
+        # random_indices = random_indices.to(self.device)
+        # print the device of self.sigs_pred
+        # print('sigs_pred_device',self.sigs_pred.device)
+        # print device of random_indices
+        # print('random_indices_device',random_indices.device)
+        sig_pred_= self.sigs_pred[random_indices]
+        # sigs_pred = self.sigs_pred[random_indices].clone().to(self.device)
+        sigs_pred = sig_pred_.clone().to(self.device)
+        x_past_= self.x_past[random_indices]
+        x_past = x_past_.clone().to(self.device)
+        # x_past = self.x_past[random_indices].clone().to(self.device)
         return sigs_pred, x_past
 
     def step(self):

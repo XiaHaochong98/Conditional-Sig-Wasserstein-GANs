@@ -15,6 +15,7 @@ class Pipeline:
     def transform(self, x, until=None):
         x = x.clone()
         for n, step in self.steps:
+            print('n,step',n,step)
             if n == until:
                 break
             x = step.transform(x)
@@ -77,6 +78,20 @@ def get_equities_dataset(assets=('SPX', 'DJI'), with_vol=True):
     else:
         raise NotImplementedError()
     data_raw = torch.from_numpy(data_raw).float()
+    pipeline = Pipeline(steps=[('standard_scale', StandardScalerTS(axis=(0, 1)))])
+    data_preprocessed = pipeline.transform(data_raw)
+    return pipeline, data_raw, data_preprocessed
+
+
+def get_dj30_dataset(spec,is_train):
+    # read npy file
+    if is_train:
+        suffix='train'
+    else:
+        suffix='test'
+    data_raw = np.load(f'./data/DJ30/{spec}_{suffix}.npy')
+    data_raw = torch.from_numpy(data_raw).float()
+    # TODO: modify this normalization pipeline
     pipeline = Pipeline(steps=[('standard_scale', StandardScalerTS(axis=(0, 1)))])
     data_preprocessed = pipeline.transform(data_raw)
     return pipeline, data_raw, data_preprocessed
@@ -169,24 +184,38 @@ def get_mit_arrythmia_dataset(filenames):
     data_pre = pipeline.transform(data_raw)
     return pipeline, data_raw, data_pre
 
+def get_DJ30_assets():
+    tics = ['GOOG']
+    dynamic_num = 3
+    assets = []
+    for tic in tics:
+        for dynamic in range(dynamic_num):
+            assets.append(tic + '_' + str(dynamic))
+    return assets
 
-def get_data(data_type, p, q, **data_params):
-    if data_type == 'VAR':
-        pipeline, x_real_raw, x_real = get_var_dataset(
-            40000, batch_size=1, **data_params
-        )
-    elif data_type == 'STOCKS':
-        pipeline, x_real_raw, x_real = get_equities_dataset(**data_params)
-    elif data_type == 'ARCH':
-        pipeline, x_real_raw, x_real = get_arch_dataset(
-            40000, N=1, **data_params
-        )
-    elif data_type == 'ECG':
-        pipeline, x_real_raw, x_real = get_mit_arrythmia_dataset(**data_params)
+
+def get_data(data_type, p, q,spec, is_train=True, **data_params):
+    if  data_type=="DJ30":
+        # assets = get_DJ30_assets()
+        pipeline, x_real_raw, x_real = get_dj30_dataset(spec, is_train)
     else:
-        raise NotImplementedError('Dataset %s not valid' % data_type)
-    assert x_real.shape[0] == 1
-    x_real = rolling_window(x_real[0], p + q)
+        if data_type == 'VAR':
+            pipeline, x_real_raw, x_real = get_var_dataset(
+                40000, batch_size=1, **data_params
+            )
+        elif data_type == 'STOCKS':
+            pipeline, x_real_raw, x_real = get_equities_dataset(**data_params)
+        elif data_type == 'ARCH':
+            pipeline, x_real_raw, x_real = get_arch_dataset(
+                40000, N=1, **data_params
+            )
+        elif data_type == 'ECG':
+            pipeline, x_real_raw, x_real = get_mit_arrythmia_dataset(**data_params)
+        else:
+            raise NotImplementedError('Dataset %s not valid' % data_type)
+        assert x_real.shape[0] == 1
+        x_real = rolling_window(x_real[0], p + q)
+    print('x_real shape: ', x_real.shape)
     return x_real
 
 

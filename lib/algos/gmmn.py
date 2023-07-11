@@ -45,6 +45,7 @@ def pairwise_distance(X, Y=None):
     else:
         m = Y.size(0)
         Y = Y.contiguous().view(m, -1)
+    # print('X.shape,Y.shape',X.shape, Y.shape)
     pairwise_distance = torch.pow(X.unsqueeze(0) - Y.unsqueeze(1), 2)
     l2_dist = pairwise_distance.sum(2)
     return l2_dist
@@ -77,6 +78,9 @@ def median_pairwise_distance(X, Y=None):
 
 
 def _partial_mmd(X, Y=None, bandwidth=None, heuristic=True):
+    # print('mmd X.shape',X.shape)
+    # if Y is not None:
+    #     print('mmd Y.shape',Y.shape)
     l2_dist = pairwise_distance(X, Y)
     if heuristic:
         heuristic_sigma = median_pairwise_distance(X, Y).detach()
