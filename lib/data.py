@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import torch
 from tqdm import tqdm
-
+from sklearn.preprocessing import StandardScaler,MinMaxScaler
 
 class Pipeline:
     def __init__(self, steps):
@@ -15,7 +15,8 @@ class Pipeline:
     def transform(self, x, until=None):
         x = x.clone()
         for n, step in self.steps:
-            print('n,step',n,step)
+            print('n',n)
+            print('step',step)
             if n == until:
                 break
             x = step.transform(x)
@@ -27,6 +28,39 @@ class Pipeline:
                 break
             x = step.inverse_transform(x)
         return x
+
+
+
+# class Pipeline_dj30:
+#     def __init__(self, steps):
+#         """ Pre- and postprocessing pipeline. """
+#         self.steps = steps
+#
+#     def fit(self,x,history_length,until=None):
+#         # fit the scaler on history_length data of each sample
+#         x = x.clone()
+#         for n, step in self.steps:
+#             print('n', n)
+#             print('step', step)
+#             if n == until:
+#                 break
+#             x = step.fit(x)
+#     def transform(self, x, until=None):
+#         x = x.clone()
+#         for n, step in self.steps:
+#             print('n',n)
+#             print('step',step)
+#             if n == until:
+#                 break
+#             x = step.transform(x)
+#         return x
+#
+#     def inverse_transform(self, x, until=None):
+#         for n, step in self.steps[::-1]:
+#             if n == until:
+#                 break
+#             x = step.inverse_transform(x)
+#         return x
 
 
 class StandardScalerTS():
@@ -47,7 +81,7 @@ class StandardScalerTS():
         return x * self.std.to(x.device) + self.mean.to(x.device)
 
 
-def get_equities_dataset(assets=('SPX', 'DJI'), with_vol=True):
+def get_equities_dataset(assets=('SPX', 'DJ30'), with_vol=True):
     """
     Get different returns series.
     """
@@ -62,9 +96,9 @@ def get_equities_dataset(assets=('SPX', 'DJI'), with_vol=True):
         rtn = (price[1:] - price[:-1]).reshape(1, -1, 1)
         vol = np.log(df_asset[['medrv']].values[-rtn.shape[1]:]).reshape(1, -1, 1)
         data_raw = np.concatenate([rtn, vol], axis=-1)
-    elif assets == ('SPX', 'DJI'):
+    elif assets == ('SPX', 'DJ30'):
         df_spx = oxford[oxford['Symbol'] == '.SPX'].set_index(['Unnamed: 0'])[start:end]
-        df_dji = oxford[oxford['Symbol'] == '.DJI'].set_index(['Unnamed: 0'])[start:end]
+        df_dji = oxford[oxford['Symbol'] == '.DJ30'].set_index(['Unnamed: 0'])[start:end]
         index = df_dji.index.intersection(df_spx.index)
         df_dji = df_dji.loc[index]
         df_spx = df_spx.loc[index]
@@ -83,18 +117,40 @@ def get_equities_dataset(assets=('SPX', 'DJI'), with_vol=True):
     return pipeline, data_raw, data_preprocessed
 
 
-def get_dj30_dataset(spec,is_train):
+def get_dj30_dataset(spec,is_train,hist_len, pred_len,data_encoding):
     # read npy file
     if is_train:
         suffix='train'
     else:
         suffix='test'
-    data_raw = np.load(f'./data/DJ30/{spec}_{suffix}.npy')
-    data_raw = torch.from_numpy(data_raw).float()
+    if data_encoding:
+        file_path=f'./data/DJ30_encoded/{spec}_{suffix}.npy'
+    else:
+        file_path=f'./data/DJ30/{spec}_{suffix}.npy'
+    data_raw = np.load(file_path)
+    # placeholder for data_preprocessed
+    data_preprocessed = data_raw.copy()
+    if not data_encoding:
+        scaler_list=[]
+        # normalize each sample of data with history sample StandardScaler along the time axis
+        # print('data preview before normalization',data_raw[:2, :10, :2])
+        for i in range(data_raw.shape[0]):
+            scaler = StandardScaler()
+            scaler.fit(data_raw[i,:hist_len,:])
+            scaler_list.append(scaler)
+            data_preprocessed[i,:,:] = scaler.transform(data_raw[i,:,:])
+        # print('data preview after normalization', data_preprocessed[:2, :10, :2])
+        data_preprocessed = torch.from_numpy(data_preprocessed).float()
+        # normalize data with history sample StandardScaler along the time axis
+    else:
+        # no need to scale the data because it is already normalized
+        data_preprocessed = torch.from_numpy(data_preprocessed).float()
+        scaler_list=None
+
     # TODO: modify this normalization pipeline
-    pipeline = Pipeline(steps=[('standard_scale', StandardScalerTS(axis=(0, 1)))])
-    data_preprocessed = pipeline.transform(data_raw)
-    return pipeline, data_raw, data_preprocessed
+    # pipeline = Pipeline(steps=[('standard_scale', StandardScalerTS(axis=(0, 1)))])
+    # data_preprocessed = pipeline.transform(data_raw)
+    return scaler_list, data_preprocessed,data_raw
 
 
 def get_var_dataset(window_size, batch_size=5000, dim=3, phi=0.8, sigma=0.5):
@@ -184,20 +240,45 @@ def get_mit_arrythmia_dataset(filenames):
     data_pre = pipeline.transform(data_raw)
     return pipeline, data_raw, data_pre
 
-def get_DJ30_assets():
-    tics = ['GOOG']
-    dynamic_num = 3
+def get_DJ30_assets(tics_constraint,data_encoding):
+    tics , dynamics = get_all_tics_and_dynamics_from_data(data_encoding)
+    # if tics_constraint is an empty list, then we use all the tics
+    if len(tics_constraint)>0:
+        # only use the tics in the tics_constraint
+        tics = [tic for tic in tics if tic in tics_constraint]
+    else:
+        tics=tics
     assets = []
     for tic in tics:
-        for dynamic in range(dynamic_num):
+        for dynamic in dynamics:
             assets.append(tic + '_' + str(dynamic))
     return assets
 
+def get_all_tics_and_dynamics_from_data(data_encoding):
+    if data_encoding:
+        data_folder = './data/DJ30_encoded/'
+    else:
+        data_folder='./data/DJ30/'
+    # for all .npy files in the folder, only include the files with 'npy' extension
+    files = [f for f in os.listdir(data_folder) if f.endswith('.npy')]
+    tics = []
+    dynamics= []
+    for file in files:
+        # print(file)
+        # print(file.split('_'))
+        tic= file.split('_')[0]
+        dynamic = file.split('_')[1]
+        if tic not in tics:
+            tics.append(tic)
+        if dynamic not in dynamics:
+            dynamics.append(dynamic)
+    return tics,dynamics
 
-def get_data(data_type, p, q,spec, is_train=True, **data_params):
+def get_data(data_type, p, q,spec, is_train=True,data_encoding=False, **data_params):
     if  data_type=="DJ30":
         # assets = get_DJ30_assets()
-        pipeline, x_real_raw, x_real = get_dj30_dataset(spec, is_train)
+        scaler_list,x_real,x_real_raw = get_dj30_dataset(spec, is_train,hist_len=p, pred_len=q,data_encoding=data_encoding)
+        return scaler_list, x_real, x_real_raw
     else:
         if data_type == 'VAR':
             pipeline, x_real_raw, x_real = get_var_dataset(

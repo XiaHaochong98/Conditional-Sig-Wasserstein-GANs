@@ -66,10 +66,19 @@ class ArFNN(nn.Module):
 
 
 class SimpleGenerator(ArFNN):
-    def __init__(self, input_dim: int, output_dim: int, hidden_dims: Tuple[int], latent_dim: int):
+    def __init__(self, input_dim: int, output_dim: int, hidden_dims: Tuple[int], latent_dim: int,activation_fn_list=None):
         super(SimpleGenerator, self).__init__(input_dim + latent_dim, output_dim, hidden_dims)
         self.latent_dim = latent_dim
+        self.activation_fn_list=activation_fn_list
 
     def sample(self, steps, x_past):
         z = torch.randn(x_past.size(0), steps, self.latent_dim).to(x_past.device)
-        return self.forward(z, x_past)
+        res= self.forward(z, x_past)
+        if self.activation_fn_list is not None:
+            for activation_fn in self.activation_fn_list:
+                new_res = []
+                for i in range(len(self.activation_fn_list)):
+                    # do not use inplace operation
+                    new_res.append(self.activation_fn_list[i](res[:, :, i]))
+            res = torch.stack(new_res, dim=2)
+        return res

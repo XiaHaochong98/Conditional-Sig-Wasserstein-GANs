@@ -5,6 +5,7 @@ from typing import Tuple
 import matplotlib.pyplot as plt
 import torch
 from tqdm import tqdm
+import torch.nn as nn
 
 from lib.arfnn import SimpleGenerator
 from lib.test_metrics import test_metrics
@@ -21,6 +22,7 @@ class BaseConfig:
     hidden_dims: Tuple[int] = 3 * (50,)
     total_steps: int = 1000
     mc_samples: int = 1000
+    data_encoding: bool = False
 
 
 def is_multivariate(x):
@@ -52,8 +54,11 @@ class BaseAlgo:
 
         self.training_loss = defaultdict(list)
         self.test_metrics_list = get_standard_test_metrics(x_real)
+        activation_fn_list=None
+        if base_config.data_encoding==True:
+            activation_fn_list = [nn.PReLU().to(base_config.device) if i==0 else nn.ReLU() for i in range(self.x_real.shape[-1])]
 
-        self.G = SimpleGenerator(self.p * self.dim, self.dim, self.hidden_dims, self.latent_dim).to(self.device)
+        self.G = SimpleGenerator(self.p * self.dim, self.dim, self.hidden_dims, self.latent_dim,activation_fn_list).to(self.device)
 
     def fit(self):
         if self.batch_size == -1:

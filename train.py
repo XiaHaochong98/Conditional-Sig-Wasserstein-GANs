@@ -41,7 +41,7 @@ def get_algo(algo_id, base_config, dataset, data_params, x_real):
     return algo
 
 
-def run(algo_id, base_config, base_dir, dataset, spec, data_params={}):
+def run(algo_id, base_config, base_dir, dataset, spec, data_encoding, data_params={}):
     """ Create the experiment directory, calibrate algorithm, store relevant parameters. """
     print('Executing: %s, %s, %s' % (algo_id, dataset, spec))
     experiment_directory = pt.join(base_dir, dataset, spec, 'seed={}'.format(base_config.seed), algo_id)
@@ -52,9 +52,30 @@ def run(algo_id, base_config, base_dir, dataset, spec, data_params={}):
     set_seed(base_config.seed)
     # initialise dataset and algo
     # for DJ30, we use the preset train and test split
+    test_normalization=False
     if dataset=='DJ30':
-        x_real_train=get_data(dataset, base_config.p, base_config.q, spec,is_train=True,**data_params)
-        x_real_test=get_data(dataset, base_config.p, base_config.q, spec,is_train=False,**data_params)
+        train_scaler, x_real_train,x_real_train_raw=get_data(dataset, base_config.p, base_config.q, spec,is_train=True,data_encoding=data_encoding,**data_params)
+        test_scaler, x_real_test,x_real_test_raw=get_data(dataset, base_config.p, base_config.q, spec,is_train=False,data_encoding=data_encoding,**data_params)
+        print('x_real_train shape',x_real_train.shape,'x_real_test shape',x_real_test.shape)
+        if test_normalization:
+            # dummy data of the same shape as x_real_train
+            x_real_train_rescale = np.zeros(x_real_train.shape)
+            for i in range(x_real_train.shape[0]):
+                x_real_train_rescale[i] = train_scaler[i].inverse_transform(x_real_train[i])
+            # get the sum diff of the rescaled data and the raw data
+            x_real_train_diff = np.sum(np.abs(x_real_train_raw-x_real_train_rescale))
+            print('x_real_train_diff',x_real_train_diff)
+            print('x_real_train_raw preview',x_real_train_raw[0,:10,:2])
+            print('x_real_train_rescale preview',x_real_train_rescale[0,:10,:2])
+            #do the same for x_real_test
+            x_real_test_rescale = np.zeros(x_real_test.shape)
+            for i in range(x_real_test.shape[0]):
+                x_real_test_rescale[i] = test_scaler[i].inverse_transform(x_real_test[i])
+            # get the sum diff of the rescaled data and the raw data
+            x_real_test_diff = np.sum(np.abs(x_real_test_raw-x_real_test_rescale))
+            print('x_real_test_diff',x_real_test_diff)
+        x_real_train = x_real_train.to(base_config.device)
+        x_real_test = x_real_test.to(base_config.device)
     else:
         x_real = get_data(dataset, base_config.p, base_config.q, spec,**data_params)
         # print('X_real_shape',x_real.shape)
@@ -70,16 +91,24 @@ def run(algo_id, base_config, base_dir, dataset, spec, data_params={}):
     savefig('summary.png', experiment_directory)
     # generate a x_fake full for evaluation
     x_fake_test = create_summary(dataset, base_config.device, algo.G, base_config.p, base_config.q, x_real_test, one=False)
-    # TODO: reverse transform normalization for x_fake_test
     # convert to numpy
     x_fake_test = x_fake_test.cpu().numpy()
+    # TODO: reverse transform normalization for x_fake_test
+    if dataset=='DJ30' and data_encoding==False:
+        for i in range(x_fake_test.shape[0]):
+            x_fake_test[i] = test_scaler[i].inverse_transform(x_fake_test[i])
     # save the x_fake_full with the name of the experiment and the algo id and dataset
     np.save(experiment_directory + f'/{algo_id}_{spec}_generated_test.npy', x_fake_test)
     # do the same for the training data
     x_fake_train = create_summary(dataset, base_config.device, algo.G, base_config.p, base_config.q, x_real_train, one=False)
     # TODO: reverse transform normalization for x_fake_train
     x_fake_train = x_fake_train.cpu().numpy()
+    if dataset=='DJ30' and data_encoding==False:
+        for i in range(x_fake_train.shape[0]):
+            x_fake_train[i] = train_scaler[i].inverse_transform(x_fake_train[i])
     np.save(experiment_directory + f'/{algo_id}_{spec}_generated_train.npy', x_fake_train)
+    print('X_real_train preview: ',  x_real_train[:2, :5, :])
+    print('X_fake_train_rescaled preview: ', x_fake_train[:2, :5, :])
     print('x_fake_train shape: ', x_fake_train.shape)
     print('X_fake_test shape: ', x_fake_test.shape)
     print(f'{algo_id} {spec} generated data saved to {experiment_directory}')
@@ -104,7 +133,7 @@ def get_dataset_configuration(dataset):
     if dataset == 'ECG':
         generator = [('id=100', dict(filenames=['100']))]
     elif dataset == 'STOCKS':
-        generator = (('_'.join(asset), dict(assets=asset)) for asset in [('SPX',), ('SPX', 'DJI')])
+        generator = (('_'.join(asset), dict(assets=asset)) for asset in [('SPX',), ('SPX', 'DJ30')])
     elif dataset == 'VAR':
         par1 = itertools.product([1], [(0.2, 0.8), (0.5, 0.8), (0.8, 0.8)])
         par2 = itertools.product([2], [(0.2, 0.8), (0.5, 0.8), (0.8, 0.8), (0.8, 0.2), (0.8, 0.5)])
@@ -119,7 +148,7 @@ def get_dataset_configuration(dataset):
     elif dataset == 'SINE':
         generator = [('a', dict())]
     elif dataset == 'DJ30':
-        assets=get_DJ30_assets()
+        assets=get_DJ30_assets(args.tics,args.data_encoding)
         generator= ((asset, dict(asset=asset)) for asset in assets)
 
     else:
@@ -150,19 +179,34 @@ def main(args):
                     q=args.q,
                     total_steps=args.total_steps,
                     mc_samples=1000,
+                    data_encoding=args.data_encoding
                 )
                 set_seed(seed)
                 generator = get_dataset_configuration(dataset)
+                # if args.data_encoding is true, add '_encoded' to the base_dir
+                if args.data_encoding:
+                    work_dir=args.base_dir +'_encoded'
                 for spec, data_params in generator:
                     run(
                         algo_id=algo_id,
                         base_config=base_config,
                         data_params=data_params,
                         dataset=dataset,
-                        base_dir=args.base_dir,
+                        base_dir=work_dir,
                         spec=spec,
+                        data_encoding=args.data_encoding,
                     )
 
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 if __name__ == '__main__':
     import argparse
@@ -177,16 +221,17 @@ if __name__ == '__main__':
     #parser.add_argument('-datasets', default=['ARCH', 'STOCKS', 'ECG', 'VAR', ], nargs="+")
     parser.add_argument('-datasets', default=['STOCKS', 'ARCH', 'VAR', ], nargs="+")
     # parser.add_argument('-datasets', default=['DJ30'], nargs="+")
-    # parser.add_argument('-algos', default=['SigCWGAN', 'GMMN', 'RCGAN', 'TimeGAN', 'RCWGAN', 'CWGAN',], nargs="+")
+    parser.add_argument('-algos', default=['SigCWGAN', 'GMMN', 'RCGAN', 'TimeGAN', 'RCWGAN', 'CWGAN',], nargs="+")
     # no need for TimeGAN here
-    parser.add_argument('-algos', default=['SigCWGAN', 'GMMN', 'RCGAN', 'RCWGAN', 'CWGAN', ], nargs="+")
+    # parser.add_argument('-algos', default=['SigCWGAN', 'GMMN', 'RCGAN', 'RCWGAN', 'CWGAN', ], nargs="+")
 
     # Algo hyperparameters
-    parser.add_argument('-batch_size', default=200, type=int)
+    parser.add_argument('-batch_size', default=256, type=int)
     parser.add_argument('-p', default=3, type=int)
     parser.add_argument('-q', default=3, type=int)
     parser.add_argument('-hidden_dims', default=3 * (50,), type=tuple)
     parser.add_argument('-total_steps', default=1000, type=int)
-
+    parser.add_argument('-data_encoding',type=bool,default=False)
+    parser.add_argument('-tics',default=[],nargs='+')
     args = parser.parse_args()
     main(args)

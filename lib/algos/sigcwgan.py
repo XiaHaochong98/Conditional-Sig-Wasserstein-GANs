@@ -8,6 +8,7 @@ from lib.algos.base import BaseAlgo, BaseConfig
 from lib.augmentations import SignatureConfig
 from lib.augmentations import augment_path_and_compute_signatures
 from lib.utils import sample_indices, to_numpy
+import torch.nn as nn
 
 
 def sigcwgan_loss(sig_pred: torch.Tensor, sig_fake_conditional_expectation: torch.Tensor):
@@ -64,8 +65,9 @@ class SigCWGAN(BaseAlgo):
         self.G_optimizer = optim.Adam(self.G.parameters(), lr=1e-2)
         self.G_scheduler = optim.lr_scheduler.StepLR(self.G_optimizer, step_size=100, gamma=0.9)
 
+
     def sample_batch(self, ):
-        random_indices = sample_indices(self.sigs_pred.shape[0], self.batch_size) # sample indices
+        random_indices = sample_indices(self.sigs_pred.shape[0], self.batch_size).to(self.device) # sample indices
         # sample the least squares signature and the log-rtn condition
         # random_indices = random_indices.to(self.device)
         # print the device of self.sigs_pred
